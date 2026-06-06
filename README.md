@@ -16,7 +16,7 @@ local Options = { safemode = false } -- Docs: https://luau.github.io/UniversalSy
 synsaveinstance(Options)
 ```
 
-## What's different from upstream
+## What's different from the normal save instance
 
 - **Unions render correctly.** Re-enabled `gethiddenproperty` during the save (it was being disabled unconditionally) so the union's `MeshData2` is actually read, and stopped `IgnoreSharedStrings` from dropping the `MeshData2` / `ChildData2` SharedStrings.
 - **Terrain** `SmoothGrid` / `PhysicsGrid` are serialized.
@@ -26,6 +26,10 @@ synsaveinstance(Options)
 
 ## Credits
 
-- Original: [luau/UniversalSynSaveInstance](https://github.com/luau/UniversalSynSaveInstance)
-- Documentation: https://luau.github.io/UniversalSynSaveInstance/api/SynSaveInstance
-- Modified by **Robloxscripts.com** — Discord: discord.robloxscripts.com
+All credit for the original SaveInstance goes to the **luau** project — please support them:
+
+- Project home & docs: **[luau.github.io](https://luau.github.io/)**
+- Source: [luau/UniversalSynSaveInstance](https://github.com/luau/UniversalSynSaveInstance)
+- API reference: [luau.github.io/UniversalSynSaveInstance/api/SynSaveInstance](https://luau.github.io/UniversalSynSaveInstance/api/SynSaveInstance)
+
+Modified by **Robloxscripts.com** — Discord: discord.robloxscripts.com
