@@ -46,11 +46,11 @@ end
 if gethiddenproperty and realcheck then
 	getgenv().gethiddenpropertygethiddenproperty = gethiddenproperty
 
+	-- Dump the raw terrain grids now. They are base64-encoded later (after `base64encode` is set up)
+	-- with the FAST encoder. The pure-Lua to_base64 used to run here and FROZE the client on big maps,
+	-- where SmoothGrid/PhysicsGrid are multiple megabytes.
 	writefile("SmoothGrid.txt", gethiddenpropertygethiddenproperty(workspace.Terrain, "SmoothGrid"))
 	writefile("PhysicsGrid.txt", gethiddenpropertygethiddenproperty(workspace.Terrain, "PhysicsGrid"))
-
-	getfenv().physicsgrid = to_base64(readfile("PhysicsGrid.txt"))
-	getfenv().smoothgrid = to_base64(readfile("SmoothGrid.txt"))
 end
 
 local function string_find(s, pattern)
@@ -276,6 +276,18 @@ do -- * Load Region of Déjà Vu
 		end
 
 		assert(sha384, "sha384 hash function not found")
+	end
+end
+
+-- Encode the terrain grids (dumped near the top) with the fast base64encode set up just above.
+-- (Doing this here instead of with the pure-Lua to_base64 at load is what stops big maps freezing.)
+if realcheck then
+	local terrain_ok = pcall(function()
+		getfenv().physicsgrid = base64encode(readfile("PhysicsGrid.txt"))
+		getfenv().smoothgrid = base64encode(readfile("SmoothGrid.txt"))
+	end)
+	if not terrain_ok then
+		realcheck = false
 	end
 end
 
@@ -1781,8 +1793,15 @@ local function StreamEntireMap(O, report)
 		end
 	end
 	local pinConn = workspace.DescendantAdded:Connect(pin)
-	for _, descendant in workspace:GetDescendants() do
-		pin(descendant)
+	do
+		local pinned = 0
+		for _, descendant in workspace:GetDescendants() do
+			pin(descendant)
+			pinned += 1
+			if pinned % 4000 == 0 then
+				task.wait() -- yield so pinning a huge workspace doesn't freeze the frame
+			end
+		end
 	end
 
 	-- Streaming radius (prefer the live target radius) and a grid over the configured area
@@ -1811,6 +1830,9 @@ local function StreamEntireMap(O, report)
 			for slice = 0, slices - 1 do
 				local yOffset = (slice - math.floor((slices - 1) / 2)) * (radius * 0.8)
 				points[#points + 1] = Vector3.new(x, origin.Y + yOffset, z)
+				if #points % 2000 == 0 then
+					task.wait() -- yield so a huge grid (small streaming radius) doesn't freeze the frame
+				end
 			end
 		end
 	end
@@ -1930,8 +1952,15 @@ local function RunDecompilePrepass(ldeccache, O, report)
 		end
 	end
 
-	for _, o in game:GetDescendants() do
-		pcall(consider, o)
+	do
+		local scanned = 0
+		for _, o in game:GetDescendants() do
+			pcall(consider, o)
+			scanned += 1
+			if scanned % 1000 == 0 then
+				task.wait() -- yield; getscriptbytecode per script is heavy on big games
+			end
+		end
 	end
 	if getloadedmodules then
 		local ok, mods = pcall(getloadedmodules)
@@ -3751,6 +3780,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 
 		if OPTIONS.SetStreaming then
+			print("[saveinstance] SetStreaming: force-loading the whole map (slow + laggy on big maps)...")
 			if StatusText then
 				StatusText.Text = "Streaming map in (this can take a while)..."
 			end
@@ -3762,15 +3792,14 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 					ProgressFill.Size = UDim2.new(streamed / totalChunks, 0, 1, 0)
 				end
 			end)
-			if not streamOk and __DEBUG_MODE then
-				__DEBUG_MODE("Streaming skipped", streamReason)
-			end
+			print(streamOk and "[saveinstance] Streaming complete." or ("[saveinstance] Streaming skipped: " .. tostring(streamReason)))
 			if ProgressFill then -- reset the bar for the save phase
 				ProgressFill.Size = UDim2.new(0, 0, 1, 0)
 			end
 		end
 
 		if OPTIONS.DecompilePrepass and not OPTIONS.noscripts and ScriptCache and ldeccache then
+			print("[saveinstance] DecompilePrepass: decompiling all scripts in parallel...")
 			if StatusText then
 				StatusText.Text = "Decompiling scripts (prepass)..."
 			end
@@ -3782,9 +3811,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 					ProgressFill.Size = UDim2.new(decompiled / totalScripts, 0, 1, 0)
 				end
 			end)
-			if not prepassOk and __DEBUG_MODE then
-				__DEBUG_MODE("Decompile prepass skipped", prepassReason)
-			end
+			print(prepassOk and "[saveinstance] Decompile prepass complete." or ("[saveinstance] Decompile prepass skipped: " .. tostring(prepassReason)))
 			if ProgressFill then -- reset the bar for the save phase
 				ProgressFill.Size = UDim2.new(0, 0, 1, 0)
 			end
