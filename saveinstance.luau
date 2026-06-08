@@ -1917,15 +1917,30 @@ end
 -- pre-fills the decompile cache (ldeccache, keyed by sha384(bytecode) exactly like ldecompile),
 -- so the save's per-script decompile becomes an instant cache hit. Inspired by centerepic/ussiprepass.
 -- Needs getscriptbytecode + an HTTP request function. Reports progress via report(done, total).
+-- Rate gate: the external decompile API rejects (and briefly blocks) unthrottled bursts, so space
+-- every request by at least `min_gap` seconds. Shared across the parallel prepass AND on-demand
+-- calls via the module-level slot. (This is the fix for "decompiler didn't work".)
+local _api_next_slot = 0
+local function acquire_api_slot(min_gap)
+	min_gap = min_gap or 0.12
+	local now = os.clock()
+	local slot = (_api_next_slot > now) and _api_next_slot or now
+	_api_next_slot = slot + min_gap
+	if slot > now then
+		task.wait(slot - now)
+	end
+end
+
 -- Decompiles bytecode via an external HTTP API (default lua.expert). Returns the source, or nil.
 -- Shared by DecompilePrepass and by the auto-fallback decompiler (executors without their own).
-local function decompile_via_api(bc, apiUrl, timeout)
+local function decompile_via_api(bc, apiUrl, timeout, min_gap)
 	local HttpRequest = request or http_request
 	if not (HttpRequest and base64encode) then
 		return nil
 	end
 	apiUrl = apiUrl or "https://api.lua.expert/decompile"
 	timeout = timeout or 20
+	acquire_api_slot(min_gap) -- throttle BEFORE dispatching, so concurrent callers space out
 	local HttpService = service.HttpService
 	local settled, payload = false, nil
 	task.spawn(function()
@@ -1968,6 +1983,7 @@ local function RunDecompilePrepass(ldeccache, O, report)
 	local apiUrl = O.PrepassApiUrl or "https://api.lua.expert/decompile"
 	local concurrency = math.max(1, tonumber(O.PrepassConcurrency) or 24)
 	local timeout = tonumber(O.PrepassTimeout) or 20
+	local rateGap = tonumber(O.PrepassRateGap) or 0.12
 
 	-- Gather unique client scripts (skip server scripts we can't read; dedupe by bytecode hash)
 	local seen, jobs = {}, {}
@@ -2030,7 +2046,7 @@ local function RunDecompilePrepass(ldeccache, O, report)
 					if not job then
 						return
 					end
-					local body = decompile_via_api(job.bc, apiUrl, timeout)
+					local body = decompile_via_api(job.bc, apiUrl, timeout, rateGap)
 					if body and body ~= "" then
 						-- strip null bytes like the normal decompile path does (they break the XML file)
 						ldeccache[job.key] = (string.gsub(body, "\0", "\\0"))
@@ -2199,6 +2215,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		DecompilePrepass = false,
 		PrepassConcurrency = 24, -- parallel decompile requests kept in flight
 		PrepassTimeout = 20, -- seconds per decompile request
+		PrepassRateGap = 0.12, -- min seconds between API requests (lua.expert rejects unthrottled bursts). Lower = faster if the API allows.
 		PrepassApiUrl = "https://api.lua.expert/decompile",
 
 		OptionsAliases = { -- You can't really modify these as a user
@@ -2780,7 +2797,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							return cached
 						end
 						if canApi then
-							local body = decompile_via_api(bytecode, OPTIONS.PrepassApiUrl, OPTIONS.PrepassTimeout)
+							local body = decompile_via_api(bytecode, OPTIONS.PrepassApiUrl, OPTIONS.PrepassTimeout, OPTIONS.PrepassRateGap)
 							if body and body ~= "" then
 								body = (string.gsub(body, "\0", "\\0")) -- null bytes break the XML file
 								if ldeccache then
@@ -2977,7 +2994,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 
 		if StatusText then
-			StatusText.Text = "Saving.. Size: " .. get_size_format()
+			StatusText.Text = "Saving instances: " .. saved_count .. " (" .. get_size_format() .. ")"
 			if ProgressFill and total_count > 0 then
 				ProgressFill.Size = UDim2.new(math.clamp(saved_count / total_count, 0, 0.99), 0, 1, 0)
 			end
@@ -3902,6 +3919,16 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		local ok, err = xpcall(save_game, function(err)
 			return debug.traceback(err)
 		end)
+
+		do -- console summary (size + time), regardless of whether the on-screen status is shown
+			local elapsed = os.clock() - elapse_t
+			if ok then
+				print(string.format("[saveinstance] Saved! %s in %.2fs", get_size_format(), elapsed))
+			else
+				warn(string.format("[saveinstance] Save FAILED after %.2fs — see the error below", elapsed))
+				warn(err)
+			end
+		end
 
 		if SafeMode then
 			service.GuiService:ClearError()
