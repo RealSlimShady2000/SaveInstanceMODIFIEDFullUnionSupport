@@ -41,7 +41,7 @@ synsaveinstance(Options)
 
 Many big maps use **StreamingEnabled**, which only loads the chunks near your character — so a normal save captures just a fraction of the map. With `SetStreaming = true`, the tool pins all loaded content (`ModelStreamingMode = Persistent`) so nothing streams back out, then sweeps the whole map firing **concurrent** `RequestStreamAroundAsync` requests (each yields when its region loads — faster than teleport-and-poll). Runs headlessly with progress in the status bar, then saving begins automatically. Expect lag on large maps.
 
-Tunables (defaults): `StreamingAreaSize` (10000), `StreamingRadius` (1024, auto-detected when possible), `StreamingConcurrency` (8), `StreamingSlices` (2), `StreamingTimeout` (20). Based on / speeds up [centerepic/Streamer7](https://github.com/centerepic/Streamer7).
+Tunables (defaults): `StreamingAreaSize` (10000), `StreamingRadius` (1024, auto-detected when possible), `StreamingConcurrency` (8), `StreamingSlices` (2), `StreamingTimeout` (20), `StreamingMaxTime` (120 — overall seconds cap; the sweep gives up on stuck/empty chunks and proceeds, so it never hangs on ocean-heavy maps). Based on / speeds up [centerepic/Streamer7](https://github.com/centerepic/Streamer7).
 
 ## Decompiling — lua.expert fallback + `DecompilePrepass`
 
