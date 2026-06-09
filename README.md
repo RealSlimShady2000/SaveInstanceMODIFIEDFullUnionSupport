@@ -33,7 +33,8 @@ synsaveinstance(Options)
 - **Faster, lighter saves** — the file is assembled with a table buffer instead of repeated string concatenation, fixing the `O(n²)` growth that caused "not enough memory" on large games.
 - **Executor capability check** — on each save it prints (console) which required functions your executor is missing (`gethiddenproperty`, `decompile`, `request`, `sethiddenproperty`, …) and the impact, so you know up front why a save might be incomplete.
 - **`UseUGCValidationService`** (default `true`) — set `false` to never use `UGCValidationService` as a hidden-property fallback (some executors flag or lack it); `gethiddenproperty` is still used.
-- A progress bar accompanies the on-screen save status.
+- A progress bar (with ETA) accompanies the on-screen save status.
+- **`Debug = true`** writes a detailed `saveinstance-debug.txt` to your executor workspace (executor, capabilities, options, streaming/prepass/decompile stats, save result) — handy for troubleshooting.
 
 > Note: `ChildData` is `NotReplicated`, so client-side saves render unions but can't make them editable/separable in Studio.
 
@@ -41,7 +42,7 @@ synsaveinstance(Options)
 
 Many big maps use **StreamingEnabled**, which only loads the chunks near your character — so a normal save captures just a fraction of the map. With `SetStreaming = true`, the tool pins all loaded content (`ModelStreamingMode = Persistent`) so nothing streams back out, then sweeps the whole map firing **concurrent** `RequestStreamAroundAsync` requests (each yields when its region loads — faster than teleport-and-poll). Runs headlessly with progress in the status bar, then saving begins automatically. Expect lag on large maps.
 
-Tunables (defaults): `StreamingAreaSize` (10000), `StreamingRadius` (1024, auto-detected when possible), `StreamingConcurrency` (8), `StreamingSlices` (2), `StreamingTimeout` (20), `StreamingMaxTime` (120 — overall seconds cap; the sweep gives up on stuck/empty chunks and proceeds, so it never hangs on ocean-heavy maps). Based on / speeds up [centerepic/Streamer7](https://github.com/centerepic/Streamer7).
+**`StreamingConcurrency` and `StreamingMaxTime` auto-scale to the map size** by default (`false` = auto): small maps finish fast, big/ocean-heavy maps get more workers and a longer time cap (60s–15m) so they aren't cut off before the real content loads. The sweep always gives up on stuck/empty chunks and proceeds, so it never hangs. Override either with a number if you want manual control. Other tunables: `StreamingAreaSize` (10000 — raise for maps wider than 10k studs), `StreamingRadius` (auto-detected), `StreamingSlices` (2), `StreamingTimeout` (20). Based on / speeds up [centerepic/Streamer7](https://github.com/centerepic/Streamer7).
 
 ## Decompiling — lua.expert fallback + `DecompilePrepass`
 
