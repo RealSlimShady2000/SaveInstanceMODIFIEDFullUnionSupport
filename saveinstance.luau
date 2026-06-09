@@ -2882,44 +2882,44 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			-- No executor decompiler -> fall back to the external API (lua.expert), using ldeccache.
 			-- DecompilePrepass pre-fills the cache in parallel; otherwise each script is decompiled on
 			-- demand here. This is what makes saves on decompiler-less executors (e.g. Volt) work.
-			local canApi = (request or http_request) and base64encode and getscriptbytecode and getbytecode
-			used_lua_expert = canApi and true or false
+			-- Call getscriptbytecode DIRECTLY (like the proven getgenv().decompile reference), NOT through
+			-- the coroutine-timeout `getbytecode` wrapper — that wrapper returned failure in the save
+			-- context on Volt, so the API was never reached.
+			local canApi = (request or http_request) and base64encode and getscriptbytecode and true or false
+			used_lua_expert = canApi
 			print(string.format(
-				"[saveinstance] lua.expert decompiler setup: canApi=%s (request=%s base64encode=%s getscriptbytecode=%s getbytecode=%s)",
-				tostring(not not canApi),
+				"[saveinstance] lua.expert decompiler setup: canApi=%s (request=%s base64encode=%s getscriptbytecode=%s)",
+				tostring(canApi),
 				tostring((request or http_request) ~= nil),
 				tostring(base64encode ~= nil),
-				tostring(getscriptbytecode ~= nil),
-				tostring(getbytecode ~= nil)
+				tostring(getscriptbytecode ~= nil)
 			))
 			local diagDone = false
 			ldecompile = function(script)
-				if getbytecode then
-					local s, bytecode = getbytecode(script)
-					if not diagDone then -- one-time diagnostic: shows why scripts may not be decompiling
-						diagDone = true
-						print(string.format(
-							"[saveinstance] first on-demand decompile: getbytecode ok=%s, bytecode=%s bytes, canApi=%s",
-							tostring(s),
-							tostring(bytecode and #bytecode or -1),
-							tostring(not not canApi)
-						))
+				local ok, bytecode = pcall(getscriptbytecode, script)
+				if not diagDone then -- one-time diagnostic: shows exactly why scripts may not decompile
+					diagDone = true
+					print(string.format(
+						"[saveinstance] first on-demand decompile: getscriptbytecode ok=%s, bytecode=%s bytes, canApi=%s",
+						tostring(ok),
+						tostring((type(bytecode) == "string") and #bytecode or -1),
+						tostring(canApi)
+					))
+				end
+				if ok and type(bytecode) == "string" and bytecode ~= "" then
+					local hashed = sha384(bytecode)
+					local cached = ldeccache and ldeccache[hashed]
+					if cached then
+						return cached
 					end
-					if s and bytecode and bytecode ~= "" then
-						local hashed = sha384(bytecode)
-						local cached = ldeccache and ldeccache[hashed]
-						if cached then
-							return cached
-						end
-						if canApi then
-							local body = decompile_via_api(bytecode, OPTIONS.PrepassApiUrl, OPTIONS.PrepassRateGap)
-							if body and body ~= "" then
-								body = (string.gsub(body, "\0", "\\0")) -- null bytes break the XML file
-								if ldeccache then
-									ldeccache[hashed] = body
-								end
-								return body
+					if canApi then
+						local body = decompile_via_api(bytecode, OPTIONS.PrepassApiUrl, OPTIONS.PrepassRateGap)
+						if body and body ~= "" then
+							body = (string.gsub(body, "\0", "\\0")) -- null bytes break the XML file
+							if ldeccache then
+								ldeccache[hashed] = body
 							end
+							return body
 						end
 					end
 				end
