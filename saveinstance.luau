@@ -313,7 +313,10 @@ local SharedString_identifiers = setmetatable({
 -- ? Union/CSG geometry lives in these SharedString properties (added in client 553).
 -- ? They MUST be saved even when IgnoreSharedStrings is on, otherwise UnionOperations
 -- ? load with no mesh/child data and Studio only draws their bounding box.
-local KeepSharedStrings = ArrayToDict({ "MeshData2", "ChildData2" })
+-- Union/MeshPart geometry & collision blobs that are SharedString-typed and MUST survive IgnoreSharedStrings:
+-- MeshData2 = render mesh (makes the union visible), ChildData2 = source operands (NotReplicated, client never has it),
+-- PhysicalConfigData = modern collision config (replicated, client HAS it) — without it newer-baked unions can lose collision.
+local KeepSharedStrings = ArrayToDict({ "MeshData2", "ChildData2", "PhysicalConfigData" })
 
 -- Debug logging (enabled by the `Debug` option). Lines are collected here and written to
 -- "saveinstance-debug.txt" in the executor's workspace at the end of a save, so the user can share
@@ -1829,10 +1832,14 @@ local function StreamEntireMap(O, report)
 		return false, "No LocalPlayer (cannot stream)"
 	end
 
-	-- Pin loaded content so it can't stream back out while we sweep the map
+	-- Keep loaded content resident while we sweep: LowMemory only streams out under real memory
+	-- pressure (Opportunistic would evict chunks behind us even without pressure — that's the
+	-- "content gained then lost" gaps). Note: ModelStreamingMode=Persistent below is largely
+	-- server-authoritative and may be a no-op from a client thread, so StreamOutBehavior is the real
+	-- client-side retention lever; we keep the Persistent pin as best-effort (executors run elevated).
 	pcall(function()
 		if sethiddenproperty then
-			sethiddenproperty(workspace, "StreamOutBehavior", Enum.StreamOutBehavior.Default)
+			sethiddenproperty(workspace, "StreamOutBehavior", Enum.StreamOutBehavior.LowMemory)
 		end
 	end)
 	local function pin(obj)
@@ -2201,24 +2208,38 @@ local function neutralize_lighting()
 		L.FogStart = 0
 		L.FogEnd = 1e6
 		L.FogColor = Color3.fromRGB(192, 192, 192)
+		L.GlobalShadows = true -- modern bright template look (raw default is false)
 	end)
-	-- Atmosphere (haze/glare) and post-effects (ColorCorrection/Bloom/Blur/SunRays/DoF) are the main
-	-- causes of the grey wash — clear them too.
+	-- Atmosphere (haze/glare) and post-effects are the main causes of the grey wash — clear them too.
+	-- `:IsA("PostEffect")` catches every effect class (ColorCorrection/Bloom/Blur/SunRays/DoF AND the
+	-- newer ColorGradingEffect), and any future ones, automatically.
 	pcall(function()
 		for _, e in ipairs(service.Lighting:GetDescendants()) do
 			if e:IsA("Atmosphere") then
-				e.Density = 0.3
+				e.Density = 0 -- 0.3 still leaves visible distance haze; 0 is fully clear
 				e.Haze = 0
 				e.Glare = 0
+				e.Offset = 0
 			elseif e:IsA("PostEffect") then
 				e.Enabled = false
+			end
+		end
+	end)
+	-- post-effects can also be parented under the camera
+	pcall(function()
+		local cam = workspace.CurrentCamera
+		if cam then
+			for _, e in ipairs(cam:GetChildren()) do
+				if e:IsA("PostEffect") then
+					e.Enabled = false
+				end
 			end
 		end
 	end)
 	pcall(function()
 		local clouds = workspace.Terrain:FindFirstChildOfClass("Clouds")
 		if clouds then
-			clouds.Density = 0
+			clouds.Enabled = false -- more reliable than Density=0 (which can leave faint wisps)
 		end
 	end)
 end
